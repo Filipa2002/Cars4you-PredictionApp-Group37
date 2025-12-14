@@ -1,10 +1,9 @@
+#Imports
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from sklearn.preprocessing import TargetEncoder
-from sklearn.preprocessing import MinMaxScaler
 import joblib
 import os
 
@@ -121,7 +120,7 @@ st.markdown("""
     /* About Us & Notice Box */
     .about-us-box { background-color: rgba(0, 0, 0, 0.1); padding: 15px; border-radius: 5px; color: #e0e0e0; margin-bottom: 20px; }
     .notice-box {
-        background-color: rgba(234, 142, 17, 0.1); padding: 20px; border-radius: 8px;
+        background-color: rgba(87, 75, 72, 0.1); padding: 20px; border-radius: 8px;
         color: #f0f0f0; font-size: 0.95rem; margin-top: 25px; margin-bottom: 25px;
         line-height: 1.5; box-shadow: 0 2px 5px rgba(0,0,0,0.1);
     }   
@@ -200,7 +199,6 @@ def load_assets():
 model_data, artifacts, history_df, load_status = load_assets()
 
 # Brand to Models dictionary from history data
-
 BRAND_MODEL_MAP = {}
 if load_status["artifacts"]:
     BRAND_MODEL_MAP = artifacts.get('valid_models_by_brand', {})
@@ -303,7 +301,7 @@ def preprocess_input(raw_df, artifacts, features_needed):
     df['mpg_per_liter'] = df['mpg'] / (df['engineSize'] + 0.1)
     df['age_mileage_interaction'] = df['age'] * df['mileage']
     
-    # Add missing features expected by the model
+    # These features although are not in the model, they are expected for pipeline_artifacts like encoers and so on 
     df['year_is_missing'] = 0
     df['engineSize_is_missing'] = 0
     df['tax_is_missing'] = 0
@@ -443,19 +441,14 @@ with tab1:
             
             try:
                 features_needed = model_data['features_in_model']
-                print(  "Features needed for model:", features_needed)  #APAGAR
                 model_instance = model_data['model']
-                print("Model instance loaded:", model_instance)  #APAGAR
 
                 # Preprocess
                 X_final = preprocess_input(raw_data, artifacts, features_needed)
-                print("Preprocessed Input Data:\n", X_final)  #APAGAR
                 # Predict (Log Scale)
                 predicted_log_price = model_instance.predict(X_final)[0]
-                print("Predicted Log Price:", predicted_log_price)  #APAGAR
                 # Inverse Transform (exp(x) - 1)
-                predicted_price = float(np.expm1(predicted_log_price))
-                print("Predicted Price (£):", predicted_price)  #APAGAR     
+                predicted_price = float(np.expm1(predicted_log_price))    
 
                 st.markdown("---")
                 st.subheader("Estimated Purchase Price")
@@ -466,7 +459,7 @@ with tab1:
                         domain = {'x': [0, 1], 'y': [0, 1]}, title = {'text': "Valuation"},
                         gauge = {'axis': {'range': [0, 159999]}, 'bar': {'color': PALETTE[5]}}
                     ))
-                    st.plotly_chart(fig_gauge, use_container_width=True)     #APAGAR
+                    st.plotly_chart(fig_gauge, use_container_width=True) 
                     
             except Exception as e:
                 st.error(f"Prediction Error: {e}")
