@@ -7,7 +7,6 @@ from sklearn.preprocessing import TargetEncoder
 from sklearn.preprocessing import MinMaxScaler
 import joblib
 import os
-import gzip
 
 # Page Configuration
 st.set_page_config(
@@ -163,19 +162,20 @@ PALETTE = ['#5C4212', '#a92f02', '#b08972', '#e3a76c', '#e5c120', '#f39c06', '#f
 # load assets including model, artifacts and history
 @st.cache_resource
 def load_assets():
-    model, artifacts, history_df = None, None, None
+    model_data, artifacts, history_df = None, None, None
     load_status = {"model": False, "artifacts": False, "history": False}
     
     # I. Load model
-    model_path_gz = 'linear_regression_model.sav.gz'    #APAGAR: MUDAR PARA O MODELO FINAL
+    model_path_gz = 'final_regression_model.sav.gz'
     
     if os.path.exists(model_path_gz):
         try:
-            with gzip.open(model_path_gz, 'rb') as f:
-                model = joblib.load(f)
+            model_data = joblib.load(model_path_gz)
             load_status["model"] = True
         except Exception as e:
             st.error(f"Fatal Model Error: {e}")
+    else:
+        st.error(f"Model file not found at {model_path_gz}")
 
     # II. Load artifacts
     if os.path.exists('pipeline_artifacts.joblib'):
@@ -184,6 +184,8 @@ def load_assets():
             load_status["artifacts"] = True
         except Exception as e:
             st.error(f"Artifact Load Error: {e}")
+    else:
+        st.error("Pipeline artifacts file not found.")
             
     # III. Load history
     if os.path.exists('history_data.parquet'):
@@ -192,26 +194,16 @@ def load_assets():
             load_status["history"] = True
         except Exception as e:
             st.error(f"History Load Error: {e}")
-    return model, artifacts, history_df, load_status
+    return model_data, artifacts, history_df, load_status
 
 
-model, artifacts, history_df, load_status = load_assets()
+model_data, artifacts, history_df, load_status = load_assets()
 
 # Brand to Models dictionary from history data
-if load_status["history"] and history_df is not None:
-    cols_lower = {c.lower(): c for c in history_df.columns}
-    brand_c = cols_lower.get('brand', 'Brand')
-    model_c = cols_lower.get('model', 'model')
-    
-    if brand_c in history_df.columns and model_c in history_df.columns:
-        BRAND_MODEL_MAP = history_df.groupby(brand_c)[model_c].unique().apply(list).to_dict()
-    else:
-        BRAND_MODEL_MAP = {}
-        st.error(f"Data Error: Columns 'Brand'/'model' were not found in the history file. Available columns: {history_df.columns.tolist()}")
-else:
-    BRAND_MODEL_MAP = {}
-    st.error("Critical Error: Failed to load the Brand/Model mapping.")
 
+BRAND_MODEL_MAP = {}
+if load_status["artifacts"]:
+    BRAND_MODEL_MAP = artifacts.get('valid_models_by_brand', {})
 
 # Function to Create Custom KPI Cards
 def create_kpi_card(col, icon_class, title, value, unit="", color_border="#e5c120"):
@@ -281,7 +273,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 # Preprocessing using loaded artifacts; used on user input
 #Basically it converts form input into numerical matrix compatible with trained pipeline
-def preprocess_input(raw_df, artifacts):
+def preprocess_input(raw_df, artifacts, features_needed):
     df = raw_df.copy()
 
     # clean strings
@@ -289,151 +281,116 @@ def preprocess_input(raw_df, artifacts):
         df['transmission'] = df['transmission'].astype(str).str.lower().str.replace('-', ' ').str.strip()
     if 'fuelType' in df.columns:
         df['fuelType'] = df['fuelType'].astype(str).str.lower().str.strip()
+    
+    # Logic to handle 'other' models
+    brand = df['Brand'].iloc[0]
+    original_model = df['model'].iloc[0]
+    valid_models_map = artifacts['valid_models_by_brand']
+    # If the model is not in the keep_tbl list for this brand, it becomes 'other'
+    if brand in valid_models_map:
+        if original_model not in valid_models_map[brand]:
+            df['model'] = 'other'
+    else:
+        # Should not happen, but safe fallback
+        df['model'] = 'other'
 
-    #new variables: age, is_new_car, is_old_car
+    #create features
     current_ref_year = 2020 
     df["age"] = (current_ref_year - pd.to_numeric(df["year"], errors="coerce")).astype(int)
-    df['is_new_car']  = (df['age'] <= 1).astype(int)
-    df['is_old_car']  = (df['age'] >= 10).astype(int)
-    
-    # new variables: miles_per_year, high_mileage, low_mileage, age_mileage_interaction
-    if 'q75' not in artifacts or 'q25' not in artifacts:
-        raise KeyError("Missing 'q75' or 'q25' in artifacts for mileage categorization.")
-    q75 = artifacts['q75']
-    q25 = artifacts['q25']
+    df["age_squared"] = df["age"] ** 2
     df['miles_per_year'] = df['mileage'] / (df['age'] + 1)
-    df['high_mileage'] = (df['mileage'] > q75).astype(int)
-    df['low_mileage']  = (df['mileage'] < q25).astype(int)
-    df['age_mileage_interaction'] = df['age'] * df['mileage']
-
-    #new variables: brand_segment, brand_mean_price, brand_median_price, brand_price_std
-    brand = df['brand'].iloc[0]
-    if 'brand_stats' not in artifacts:
-        raise KeyError("Missing 'brand_stats' in artifacts for brand statistics.")
-    
-    if brand not in artifacts['brand_stats']:
-        raise KeyError(f"The brand '{brand}' was not found in the training statistics.")
-    
-    brand_info = artifacts['brand_stats'][brand]
-
-    try:
-        # store stats in df for later
-        df['brand_mean_price'] = brand_info['brand_mean_price']
-        df['brand_median_price'] = brand_info['brand_median_price']
-        df['brand_price_std'] = brand_info['brand_price_std']
-        df['brand_segment'] = brand_info['brand_segment']
-        df['brand_popularity'] = brand_info['brand_popularity']
-    except KeyError as e:
-        raise KeyError(f"Missing specific stat data for brand '{brand}': {e}")
-    
-    # new variables: premium_brand_engine_size_interaction, tax_per_engine, mpg_per_liter, brand_model, model_popularity
-    df['premium_brand_engine_size_interaction'] = (df['brand_segment'] == 'luxury').astype(int) * df['engineSize']
     df['tax_per_engine'] = df['tax'] / (df['engineSize'] + 0.1)
     df['mpg_per_liter'] = df['mpg'] / (df['engineSize'] + 0.1)
-    df['brand_model'] = df['brand'] + '_' + df['model']
-
+    df['age_mileage_interaction'] = df['age'] * df['mileage']
+    
+    # Add missing features expected by the model
+    df['year_is_missing'] = 0
+    df['engineSize_is_missing'] = 0
+    df['tax_is_missing'] = 0
+    df['mpg_is_missing'] = 0
+    df['hasDamage'] = 0 
+    df['is_new_car'] = 0
+    df['is_old_car'] = 0
+    df['low_mileage'] = 0
+    df['high_mileage'] = 0
+    
+    if 'brand_stats' not in artifacts: raise KeyError("brand_stats missing")
+    brand_data = artifacts['brand_stats'].get(brand, None)
+    if brand_data:
+        is_luxury = 1 if brand_data['brand_segment'] == 'luxury' else 0
+        df['brand_popularity'] = brand_data['brand_popularity']
+        df['brand_price_std'] = brand_data['brand_price_std']
+        df['brand_segment'] = brand_data['brand_segment']
+    else:
+        raise ValueError(f"Erro Crítico: A marca '{brand}' não foi encontrada nas estatísticas de treino (brand_stats).")
+        
+    df['premium_brand_engine_size_interaction'] = is_luxury * df['engineSize']
+    
+    # Model Popularity
     model_name = df['model'].iloc[0]
     if 'model_counts' not in artifacts:
-        raise KeyError("Missing 'model_counts' in artifacts.")
-    if model_name not in artifacts['model_counts']:
-        raise KeyError(f"The model '{model_name}' was not found in the training statistics.")
-    df['model_popularity'] = artifacts['model_counts'][model_name]
+        raise KeyError("'model_counts' missing in artifacts.")
 
+    if model_name in artifacts['model_counts']:
+        df['model_popularity'] = artifacts['model_counts'][model_name]
+    else:
+        raise ValueError(f"Critical Error: The model '{model_name}' was not found in the popularity statistics (model_counts).")
+
+    # Create brand_model
+    df['brand_model'] = df['Brand'] + '_' + df['model']
+
+    # Target Encoding
     if 'target_encoder' not in artifacts: 
         raise KeyError("Missing 'target_encoder' in artifacts.")
     target_encoder = artifacts['target_encoder']
-    high_card_cols = artifacts.get('high_cardinality_cols', ['Brand', 'brand_model'])
+    high_card_cols = artifacts['high_cardinality_cols']
     
-
-    # if 'target_enc_mappings' not in artifacts:
-    #     raise KeyError("Missing 'target_enc_mappings' in artifacts.")
-    # # Target Encoding for 'Brand' and 'brand_model'    
-    # mappings = artifacts['target_enc_mappings']
-
-    
-    # Rename columns to match training Capitalization (Brand vs brand)
-    df_for_te = df.copy()
-    if 'brand' in df_for_te.columns:
-        df_for_te = df_for_te.rename(columns={'brand': 'Brand'})
-
-    #APAGAR: SERÁ QUE PRECISO ADICIONAR?
-    # Ensure brand_model exists in df_for_te
-    # if 'brand_model' not in df_for_te.columns and 'brand_model' in df.columns:
-    #     df_for_te['brand_model'] = df['brand_model']
-
-    # Check target encoding columns
-    missing_te = [c for c in high_card_cols if c not in df_for_te.columns]
-    if missing_te: raise ValueError(f"Missing columns for TargetEncoder: {missing_te}")
-
     try:
-        # Transform returns numpy array
-        te_features = target_encoder.transform(df_for_te[high_card_cols])
-        # Assign back to df with _target_enc suffix
-        for i, col in enumerate(high_card_cols):
-            df[f'{col}_target_enc'] = te_features[:, i]
+        te_features = target_encoder.transform(df[high_card_cols])
+        df['brand_mean_price'] = te_features[:, 0]
+        df['model_mean_price'] = te_features[:, 1]
     except Exception as e:
         raise ValueError(f"Target Encoding Error: {e}")
-    
+
+
     # One-Hot Encoding for low cardinality categorical variables
-    low_card_cols = artifacts.get('low_cardinality_cols')
+    low_card_cols = artifacts['low_cardinality_cols']
     if not low_card_cols: raise KeyError("Missing 'low_cardinality_cols' in artifacts.")
     
-    ohe = artifacts.get('ohe')
+    ohe = artifacts['ohe']
     if not ohe: raise KeyError("Missing 'ohe' in artifacts.")
     
-    # Check columns exist
-    missing_cols = [c for c in low_card_cols if c not in df.columns]
-    if missing_cols:
-        raise ValueError(f"Missing columns for OHE: {missing_cols}")
-
     try:
         ohe_features = ohe.transform(df[low_card_cols])
         ohe_df = pd.DataFrame(ohe_features, columns=ohe.get_feature_names_out(), index=df.index)
     except ValueError as e:
         raise ValueError(f"OHE Transformation Error: {e}. Check if input categories match training categories.")
-        
-    #drop unused columns
-    df_processed = df.drop(columns=['brand', 'model', 'year', 'transmission', 'fuelType', 'brand_model', 'brand_segment'], errors='ignore') #APAGAR: talvez tirar mais
 
-    if 'paintQuality%' in df_processed.columns:
-        raise KeyError("Column 'paintQuality%' should not exist.")
-     
-    final_cols = artifacts.get('final_columns')
-    if not final_cols: raise KeyError("Missing 'final_columns' in artifacts.")
- 
-    # Add missing flags only if model expects them
-    # missing flags = 0 since we demand all inputs
-    for flag in ['mpg_is_missing', 'tax_is_missing', 'engineSize_is_missing', 'year_is_missing']:
-        if flag in final_cols:
-            df_processed[flag] = 0
+    # Concatenate
+    df_step = pd.concat([df, ohe_df], axis=1)
 
-    # Combine processed df with OHE features
-    df_final_step = pd.concat([df_processed, ohe_df], axis=1)
+    # Power Transformer
+    preprocessor = artifacts['preprocessor'] # ColumnTransformer
+    if not preprocessor: raise KeyError("Missing 'preprocessor' in artifacts.")
 
-
-    missing_final_cols = [c for c in final_cols if c not in df_final_step.columns]
+    X_transformed_array = preprocessor.transform(df_step)
     
-    # #APAGAR
-    # for c in final_cols:
-    #     if c not in df_final_step.columns:
-    #         df_final_step[c] = 0 # default value for missing columns
+    final_cols_from_train = artifacts.get('final_columns')
+    if final_cols_from_train is None:
+        if hasattr(preprocessor, "get_feature_names_out"):
+            final_cols_from_train = preprocessor.get_feature_names_out()
+        else:
+            final_cols_from_train = features_needed
 
-    # Ensuring all final columns are present
-    if missing_final_cols:
-         raise ValueError(f"Missing final columns for the model: {missing_final_cols}")
-
+    # Convert back to DataFrame to select features by name
+    X_transformed_df = pd.DataFrame(
+        X_transformed_array, 
+        columns=final_cols_from_train, 
+        index=df.index
+    )
     
-    df_final_step = df_final_step[final_cols]
-        
-    # Scaling
-    scaler = artifacts.get('scaler') #get columnTransformer
-    if not scaler: raise KeyError("Missing 'scaler' in artifacts.")
-    
-    X_scaled = scaler.transform(df_final_step)
-    return X_scaled
+    return X_transformed_df[features_needed]
 
-
-#APAGAR: CONFIRMAR OS VALORES SÃO MÁX E MÍNIMOS DE TRAIN E TEST...tipo unkown e other não serão a mesma coisa?
 # Main Interface
 tab1, tab2 = st.tabs(["📝 Vehicle Evaluation", "📊 Purchase History Analysis"])
 
@@ -445,8 +402,8 @@ with tab1:
         st.error("ERROR: Prediction Engine Offline.")
     
     col1, col2 = st.columns(2)
-    with col1: selected_brand = st.selectbox("Brand", options=list(BRAND_MODEL_MAP.keys()), help="Select your car’s main brand")
-    with col2: selected_model = st.selectbox("Model", options=BRAND_MODEL_MAP.get(selected_brand, []), help="Select your car’s model")
+    with col1: selected_brand = st.selectbox("Brand", options=sorted(list(BRAND_MODEL_MAP.keys())), help="Select your car’s main brand")
+    with col2: selected_model = st.selectbox("Model", options=sorted(BRAND_MODEL_MAP.get(selected_brand, [])), help="Select your car’s model")
 
     col3, col4 = st.columns(2)
     with col3: year = st.slider("Registration Year", 1970, 2020, 2015, help="Select the year of registration of your car")
@@ -454,21 +411,13 @@ with tab1:
     
     col5, col6, col7 = st.columns(3)
     with col5: engine_size = st.number_input("Engine Size (L)", 0.0, 6.6, 1.5, 0.1, help="Enter the engine size of your car in liters (L), equivalent to cubic decimeters (dm³)")
-    with col6: fuel_type = st.selectbox("Fuel Type", ["Petrol", "Diesel", "Hybrid", "Electric", "Other", "Unknown"], help="Select the fuel type your car uses")
-    with col7: transmission = st.selectbox("Transmission", ["Manual", "Automatic", "Semi-Auto", "Other", "Unknown"], help="Select the transmission type of your car")
+    with col6: fuel_type = st.selectbox("Fuel Type", ["Petrol", "Diesel", "Hybrid", "Electric", "Other"], help="Select the fuel type your car uses")
+    with col7: transmission = st.selectbox("Transmission", ["Manual", "Automatic", "Semi-Auto", "Other"], help="Select the transmission type of your car")
     
     col8, col9, col10 = st.columns(3)
     with col8: tax = st.number_input("Vehicle Tax (£)", 0.0, 580.0, 150.0, help="Enter the amount of road tax (in £) that, in 2020, was applicable to your car")
-    with col9: mpg = st.number_input("Miles per Gallon", 0.0, 470.8, 50.0, 1.0, help="Enter the average miles per gallon (MPG) your car achieves")
-    with col10: prev_owners = st.number_input("Previous Owners", 0, 6, 1,  help="Enter the number of previous owners your car has had")
-
-    col11, col12 = st.columns(2)
-    with col11: 
-        st.write("")
-        st.write("")
-        has_damage = st.checkbox("Damaged Vehicle?")
-    with col12:
-        st.empty()                        
+    with col9: mpg = st.number_input("Miles per Gallon", 1.0, 470.8, 50.0, 1.0, help="Enter the average miles per gallon (MPG) your car achieves")
+    with col10: prev_owners = st.number_input("Previous Owners", 0, 6, 1,  help="Enter the number of previous owners your car has had")                        
     
     st.markdown("""<div class="notice-box"><strong> Important Notice:</strong><br>
                 Dear Customer, should your vehicle's specifications fall outside the ranges supported by our automated system,
@@ -480,18 +429,33 @@ with tab1:
             st.error("Cannot predict: Missing model files.")
         else:
             raw_data = pd.DataFrame({
-                'brand': [selected_brand], 'model': [selected_model], 'year': [year], 'mileage': [mileage],
-                'tax': [tax], 'fuelType': [fuel_type], 'mpg': [mpg], 'engineSize': [engine_size],
-                'previousOwners': [prev_owners], 'hasDamage': [has_damage], 'transmission': [transmission]
+                'Brand': [selected_brand], 
+                'model': [selected_model], 
+                'year': [year], 
+                'mileage': [mileage],
+                'tax': [tax], 
+                'fuelType': [fuel_type], 
+                'mpg': [mpg], 
+                'engineSize': [engine_size],
+                'previousOwners': [prev_owners],
+                'transmission': [transmission]
             })
             
             try:
-                processed_input = preprocess_input(raw_data, artifacts)
-                # Predict log price
-                predicted_log_price = model.predict(processed_input)[0]
-                # Reverse log transform (exp(x) - 1)
+                features_needed = model_data['features_in_model']
+                print(  "Features needed for model:", features_needed)  #APAGAR
+                model_instance = model_data['model']
+                print("Model instance loaded:", model_instance)  #APAGAR
+
+                # Preprocess
+                X_final = preprocess_input(raw_data, artifacts, features_needed)
+                print("Preprocessed Input Data:\n", X_final)  #APAGAR
+                # Predict (Log Scale)
+                predicted_log_price = model_instance.predict(X_final)[0]
+                print("Predicted Log Price:", predicted_log_price)  #APAGAR
+                # Inverse Transform (exp(x) - 1)
                 predicted_price = float(np.expm1(predicted_log_price))
-                                
+                print("Predicted Price (£):", predicted_price)  #APAGAR     
 
                 st.markdown("---")
                 st.subheader("Estimated Purchase Price")
@@ -499,11 +463,10 @@ with tab1:
                 with c2:
                     fig_gauge = go.Figure(go.Indicator(
                         mode = "gauge+number", value = predicted_price, number = {'prefix': "£ "},
-                        domain = {'x': [0, 1], 'y': [0, 1]}, title = {'text': "Estimated Buying Price"},
-                        gauge = {'axis': {'range': [450, 159999]}, 'bar': {'color': PALETTE[5]}}
+                        domain = {'x': [0, 1], 'y': [0, 1]}, title = {'text': "Valuation"},
+                        gauge = {'axis': {'range': [0, 159999]}, 'bar': {'color': PALETTE[5]}}
                     ))
-                    st.plotly_chart(fig_gauge, use_container_width=True)
-                    if has_damage: st.warning("Damage penalty applied.")       #APAGAR
+                    st.plotly_chart(fig_gauge, use_container_width=True)     #APAGAR
                     
             except Exception as e:
                 st.error(f"Prediction Error: {e}")
@@ -530,6 +493,7 @@ with tab2:
         model_col = get_col('model', 'model')
         trans_col = get_col('transmission', 'transmission')
         eng_col = get_col('engineSize', 'engineSize')
+        #basic calculations for dashboard
         if year_col in df_analytics.columns:
             df_analytics['age'] = 2020 - df_analytics[year_col]
         if mileage_col in df_analytics.columns and 'age' in df_analytics.columns:
@@ -560,46 +524,45 @@ with tab2:
 
        # Row 1
         st.subheader("Hierarchy Analysis")
-        fig_sun = px.sunburst(df_analytics, path=[brand_col, model_col, fuel_col, trans_col], 
-                              values=price_col, color=price_col, color_continuous_scale='Oranges',
-                              height=600)
-        st.plotly_chart(fig_sun, use_container_width=True)
+        #ensure path cols exist
+        path_cols = [c for c in [brand_col, model_col, fuel_col] if c in df_analytics.columns]
+        if len(path_cols) > 1:
+            fig_sun = px.sunburst(df_analytics, path=path_cols, 
+                                  values=price_col, color=price_col, color_continuous_scale='Oranges',
+                                  height=600)
+            st.plotly_chart(fig_sun, use_container_width=True)
 
         st.markdown("---")
         # Row 2
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("Brand Radar")
+            st.subheader("Brand Radar (Normalized)")
             mpg_c = get_col('mpg', 'mpg')
             cols_to_use = [price_col, mileage_col, year_col]
             if eng_col in df_analytics.columns: cols_to_use.append(eng_col)
             if mpg_c in df_analytics.columns: cols_to_use.append(mpg_c)
             
             df_rad = df_analytics.groupby(brand_col)[cols_to_use].mean().reset_index()
-            scaler = MinMaxScaler()
-            df_rad[cols_to_use] = scaler.fit_transform(df_rad[cols_to_use])
-            
+            for c in cols_to_use:
+                    mx = df_rad[c].max()
+                    mn = df_rad[c].min()
+                    if mx != mn: df_rad[c] = (df_rad[c] - mn) / (mx - mn)
+
             fig = go.Figure()
             all_brands = df_rad[brand_col].unique()
-            
             for i, b in enumerate(all_brands):
                 val = df_rad[df_rad[brand_col]==b][cols_to_use].values.flatten().tolist()
                 is_visible = True if i < 3 else 'legendonly'
-                fig.add_trace(go.Scatterpolar(r=val+[val[0]], theta=cols_to_use+[cols_to_use[0]], fill='toself', name=b, visible=is_visible))
+                fig.add_trace(go.Scatterpolar(r=val+[val[0]], theta=cols_to_use+[cols_to_use[0]], fill='toself', name=b, visible=is_visible, marker_color=px.colors.sequential.Jet[i % len(px.colors.sequential.Jet)]))
             
             fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0,1])), showlegend=True, height=400)
             st.plotly_chart(fig, use_container_width=True)
 
         with c2:
-            st.subheader("Price vs Mileage Density")
-            custom_colors = [
-                [0.0, "white"],
-                [0.5, "#ffb347"],
-                [1.0, "#a92f02"]
-            ]
+            st.subheader("Price vs Mileage")
             fig = px.density_heatmap(df_analytics, x=mileage_col, y=price_col, 
                                      marginal_x="histogram", marginal_y="histogram",
-                                     color_continuous_scale=custom_colors)
+                                     color_continuous_scale=px.colors.sequential.Oranges)
             fig.update_xaxes(range=[0, 80000])
             fig.update_yaxes(range=[5000, 60000])
             st.plotly_chart(fig, use_container_width=True)
