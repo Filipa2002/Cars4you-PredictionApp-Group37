@@ -1,7 +1,22 @@
 <div align="center">
+  <img src="./images/4.jpg" alt="Logo" width="100">
   <h1>Cars 4 You | Intelligent Pricing System</h1>
   <p>A Streamlit web application for intelligent vehicle price estimation and market analysis.</p>
+
+  <a href="https://cars4you-prediction-and-dashboard-group37.streamlit.app/">
+    <img src="https://static.streamlit.io/badges/streamlit_badge_black_white.svg" alt="Streamlit App">
+  </a>
+  <a href="https://github.com/Filipa2002/Cars4You-Expediting-Car-Evaluations-with-ML">
+    <img src="https://img.shields.io/badge/GitHub-Main%20Repository-blue?logo=github" alt="GitHub Repository">
+  </a>
 </div>
+
+---
+
+## 🔗 Quick Links
+
+* **Live Application:** [View Web App](https://cars4you-prediction-and-dashboard-group37.streamlit.app/)
+* **Main Project Repository:** [Full Data Science Pipeline & Training](https://github.com/Filipa2002/Cars4You-Expediting-Car-Evaluations-with-ML)
 
 ---
 
@@ -31,8 +46,8 @@ To run this application on your local machine, please follow these steps.
 Clone this repository to your local machine:
 
 ```bash
-git clone https://github.com/your-username/your-repository-name.git
-cd your-repository-name
+git clone [https://github.com/Filipa2002/Cars4You-Expediting-Car-Evaluations-with-ML.git](https://github.com/Filipa2002/Cars4You-Expediting-Car-Evaluations-with-ML.git)
+cd Cars4You-Expediting-Car-Evaluations-with-ML
 ```
 
 ### 2. Install Dependencies
@@ -68,7 +83,7 @@ However, you can always run the application locally by following the installatio
 ```
 .
 ├── app.py                          # Main Streamlit application
-├── linear_regression_model.sav.gz  # Trained machine learning model
+├── final_regression_model.sav.gz  # Trained machine learning model
 ├── pipeline_artifacts.joblib       # Preprocessing pipeline components
 ├── history_data.parquet            # Historical data for the analytics dashboard
 ├── images/                         # Static image assets
@@ -80,7 +95,7 @@ However, you can always run the application locally by following the installatio
 
 ## 👥 Authors
 
-This project was brought to you by **Group 37**:
+This project was developed by **Group 37**:
 
 - Filipa Pereira, 20240509
 - Gonçalo Silva, 20250354
