@@ -1,6 +1,6 @@
 streamlit==1.47.0
 pandas==2.2.3
-numpy==1.26.4
+numpy==2.3.3
 scikit-learn==1.7.2
 fastparquet==2024.11.0
 plotly==6.0.1
