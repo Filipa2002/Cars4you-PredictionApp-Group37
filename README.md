@@ -1,5 +1,4 @@
 <div align="center">
-  <img src="./images/4.jpg" alt="Logo" width="100">
   <h1>Cars 4 You | Intelligent Pricing System</h1>
   <p>A Streamlit web application for intelligent vehicle price estimation and market analysis.</p>
 
