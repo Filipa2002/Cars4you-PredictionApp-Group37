@@ -14,8 +14,8 @@
 
 ## 🔗 Quick Links
 
-* **Live Application:** [View Web App](https://cars4you-prediction-and-dashboard-group37.streamlit.app/)
-* **Main Project Repository:** [Full Data Science Pipeline & Training](https://github.com/Filipa2002/Cars4You-Expediting-Car-Evaluations-with-ML)
+* **Live Application:** [Cars4You App](https://cars4you-prediction-and-dashboard-group37.streamlit.app/)
+* **Main Project Repository:** [Cars4You-Group37](https://github.com/Filipa2002/Cars4You-Expediting-Car-Evaluations-with-ML)
 
 ---
 
